@@ -43,7 +43,19 @@ foreach (var element in candidates)
     if (await IsListingTitle(element))
     {
         var text = await element.InnerTextAsync();
-        Console.WriteLine(text);
+        // Continously traverse up the DOM tree until we find an <a> element
+        // This is the link to the listing
+        var link = await element.EvaluateAsync<string?>(@"(element) => {
+            while (element) {
+                if (element.tagName === 'A') {
+                    return element.href;
+                }
+                element = element.parentElement;
+            }
+            return null;
+        }");
+        
+        Console.WriteLine();
     }
 }
 
