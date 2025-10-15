@@ -1,21 +1,27 @@
-﻿FROM mcr.microsoft.com/dotnet/runtime:9.0 AS base
-USER $APP_UID
-WORKDIR /app
-
+﻿# Use official Microsoft .NET SDK image to build
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
-ARG BUILD_CONFIGURATION=Release
-WORKDIR /src
-COPY ["FacebookS/FacebookS.csproj", "FacebookS/"]
-RUN dotnet restore "FacebookS/FacebookS.csproj"
-COPY . .
-WORKDIR "/src/FacebookS"
-RUN dotnet build "./FacebookS.csproj" -c $BUILD_CONFIGURATION -o /app/build
 
-FROM build AS publish
-ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "./FacebookS.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
-
-FROM base AS final
 WORKDIR /app
-COPY --from=publish /app/publish .
-ENTRYPOINT ["dotnet", "FacebookS.dll"]
+
+# Copy project files
+COPY . .
+
+# Restore dependencies
+RUN dotnet restore
+
+# Build the project in Release mode
+RUN dotnet publish -c Release --self-contained true -o /out
+
+
+# ---- RUNTIME IMAGE ----
+FROM mcr.microsoft.com/playwright/dotnet:v1.55.0-noble AS runtime
+
+WORKDIR /app
+
+# Copy published app from build image
+COPY --from=build /out ./
+
+RUN chmod +x FacebookS
+
+# Set the entry point
+ENTRYPOINT ["./FacebookS"]

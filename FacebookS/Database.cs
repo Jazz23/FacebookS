@@ -23,8 +23,18 @@ public class Database(string path)
     private async Task SaveDatabase()
     {
         if (_database == null) return;
+        
+        FilterOldListings();
         var json = JsonSerializer.Serialize(_database);
         await File.WriteAllTextAsync(path, json);
+    }
+
+    private void FilterOldListings()
+    {
+        if (_database == null) return;
+        
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-7).ToUnixTimeSeconds();
+        _database.RemoveAll(listing => listing.Date < cutoff);
     }
 
     private async Task<ListingDatabase> LoadDatabase()
