@@ -30,7 +30,7 @@ var handler = new RateLimitedHandler(new HttpClientHandler(), limiter);
 var httpClient = new HttpClient(handler);
 
 using var playwright = await Playwright.CreateAsync();
-var (page, browser) = await InitializePlaywright();
+var (page, browser) = await InitializePlaywright(playwright);
 
 while (true)
 {
@@ -38,7 +38,7 @@ while (true)
     {
         await browser.CloseAsync();
         await browser.DisposeAsync();
-        (page, browser) = await InitializePlaywright();
+        (page, browser) = await InitializePlaywright(playwright);
     }
     
     try
@@ -60,7 +60,7 @@ while (true)
         {
             if (!await database.StoreInDatabase(listing)) continue;
 
-            await PostListingToDiscord(listing);
+            // await PostListingToDiscord(listing);
             Console.WriteLine($"Found new listing {listing.Title} - {listing.Link}");
         }
 
@@ -77,34 +77,104 @@ while (true)
 
 return;
 
-async Task<(IPage page, IBrowser browser)> InitializePlaywright()
+async Task<(IPage page, IBrowser browser)> InitializePlaywright(IPlaywright pw)
 {
-    var browserResult = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+    
+    var loadedMarketplace = false;
+    IBrowser browserResult;
+    IPage pageResult;
+
+    // Keep trying to load the marketplace until we succeed
+    do
     {
-        Headless = true,
-        Proxy = new Proxy
+        // Launch the browser with proxy settings from environment variables
+        browserResult = await pw.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
         {
-            Server = System.Environment.GetEnvironmentVariable("PROXY_HOST")!,
-            Username = System.Environment.GetEnvironmentVariable("PROXY_USERNAME")!,
-            Password = System.Environment.GetEnvironmentVariable("PROXY_PASSWORD")!
+            Headless = true,
+            Proxy = new Proxy
+            {
+                Server = System.Environment.GetEnvironmentVariable("PROXY_HOST")!,
+                Username = System.Environment.GetEnvironmentVariable("PROXY_USERNAME")!,
+                Password = System.Environment.GetEnvironmentVariable("PROXY_PASSWORD")!
+            }
+        });
+
+        // Create a new browser context with a custom user agent for consistency across platforms
+        var context = await browserResult.NewContextAsync(new BrowserNewContextOptions
+        {
+            UserAgent =
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/140.0.7339.16 Safari/537.36"
+        });
+        pageResult = await context.NewPageAsync();
+        
+        // Intercept network requests to block images to save on bandwidth
+        await pageResult.RouteAsync("**/*", async route =>
+        {
+            // Hide exceptions here because they override real exceptions
+            try
+            {
+                var request = route.Request;
+                if (request.ResourceType == "image")
+                    await route.AbortAsync(); // cancel image requests
+                else
+                    await route.ContinueAsync(); // allow everything else
+            }
+            catch (Exception e)
+            {
+
+            }
+        });
+        
+        // Navigate to Facebook Marketplace
+        await pageResult.GotoAsync(Url);
+        
+        // If the page redirects to a login screen, relaunch a new browser and try again
+        if (pageResult.Url.Contains("login"))
+        {
+            await browserResult.CloseAsync();
+            await browserResult.DisposeAsync();
+            Console.WriteLine("Login screen detected");
         }
-    });
-
-    var context = await browserResult.NewContextAsync(new BrowserNewContextOptions
-    {
-        UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/140.0.7339.16 Safari/537.36"
-    });
-    var pageResult = await context.NewPageAsync();
-
-
-    await pageResult.RouteAsync("**/*", async route =>
-    {
-        var request = route.Request;
-        if (request.ResourceType == "image")
-            await route.AbortAsync(); // cancel image requests
         else
-            await route.ContinueAsync(); // allow everything else
-    });
+        {
+            loadedMarketplace = true;
+        }
+    }
+    while (!loadedMarketplace);
+    
+    // If the page shows "Decline optional cookies", click it
+    var declineButton = await pageResult.QuerySelectorAsync("text=Decline optional cookies");
+    if (declineButton != null)
+        await declineButton.ClickAsync();
+    // Click on the button whose aria-label="Close"
+    await pageResult.ClickAsync("div[aria-label='Close']");
+    // Click on the radius selection dropdown
+    await pageResult.ClickAsync(
+        ".x193iq5w.xeuugli.x13faqbe.x1vvkbs.x1xmvt09.x1lliihq.x1s928wv.xhkezso.x1gmr53x.x1cpjm7i.x1fgarty.x1943h6x.xudqn12.x3x7a5m.x6prxxf.xvq8zen.x1s688f.x1fey0fg");
+    // Click onthe element with class "xjyslct xjbqb8w x13fuv20 x18b5jzi x1q0q8m5 x1t7ytsu x972fbf x10w94by x1qhh985 x14e42zd x9f619 xzsf02u x78zum5 x1jchvi3 x1fcty0u x132q4wb xdj266r x14z9mp xat24cr x1lziwak x1a2a7pz x1a8lsjc xv54qhq xf7dkkf x9desvi x1n2onr6 x16tdsg8 xh8yej3 x1ja2u2z"
+    await pageResult.ClickAsync(
+        ".xjyslct.xjbqb8w.x13fuv20.x18b5jzi.x1q0q8m5.x1t7ytsu.x972fbf.x10w94by.x1qhh985.x14e42zd.x9f619.xzsf02u.x78zum5.x1jchvi3.x1fcty0u.x132q4wb.xdj266r.x14z9mp.xat24cr.x1lziwak.x1a2a7pz.x1a8lsjc.xv54qhq.xf7dkkf.x9desvi.x1n2onr6.x16tdsg8.xh8yej3.x1ja2u2z");
+    
+    // Click on the element whose inner text is "10 miles" or "20 kilometres"
+    await pageResult.Locator(":text-matches('^(10 miles|20 kilometres)$')").ClickAsync();
+
+    
+    // Delete the element whose class is "x78zum5 xdt5ytf x2lah0s x193iq5w x2bj2ny x1ey2m1c xayqjjm x9f619 xtijo5x x1o0tod x1xy6bms xpdmqnj x1s14bel x1g0dm76 xixxii4 x8hos8a x1u8a7rm"
+    await pageResult.EvaluateAsync(@"() => {
+        const element = document.querySelector('.x78zum5.xdt5ytf.x2lah0s.x193iq5w.x2bj2ny.x1ey2m1c.xayqjjm.x9f619.xtijo5x.x1o0tod.x1xy6bms.xpdmqnj.x1s14bel.x1g0dm76.xixxii4.x8hos8a.x1u8a7rm');
+        if (element) {
+            element.remove();
+        }
+    }");
+
+    await pageResult.ClickAsync("text=Apply");
+    
+    // Submit the input whose aria-label="Search Marketplace"
+    await pageResult.ClickAsync("input[placeholder='Search Marketplace']");
+    await pageResult.PressAsync("input[placeholder='Search Marketplace']", "Enter");
+
+    // Wait for the page to load
+    await pageResult.WaitForLoadStateAsync(LoadState.NetworkIdle);
     
     return (pageResult, browserResult);
 }
