@@ -60,7 +60,7 @@ while (true)
         {
             if (!await database.StoreInDatabase(listing)) continue;
 
-            // await PostListingToDiscord(listing);
+            await PostListingToDiscord(listing);
             Console.WriteLine($"Found new listing {listing.Title} - {listing.Link}");
         }
 
@@ -219,7 +219,10 @@ async Task<ListingDatabase> RefreshListings()
 {
     var results = new ListingDatabase();
     // Navigate to Facebook
-    await page.GotoAsync(Url);
+    await page.ReloadAsync();
+    
+    // take a screenshot
+    await page.ScreenshotAsync(new PageScreenshotOptions { Path = "screenshot.png" });
     // Wait for elements with the listingTextClass class to load
     var candidates = await page.QuerySelectorAllAsync(ListingTextClass);
     var retries = 5;
